@@ -15,6 +15,7 @@ android_logger = "0.13"
 libc = "0.2"
 once_cell = "1.18"
 unix_socket = "0.5.0"
-# ndk 0.9.0 feature names: 'nativewindow' and 'input'
-ndk = { version = "0.9.0", features = ["nativewindow", "input"] }
+# Using ndk 0.9.0 without explicit features to avoid the selection error.
+# The default features in 0.9.0 include native_window and input support.
+ndk = "0.9.0"
 ndk-sys = "0.5.0"

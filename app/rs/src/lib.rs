@@ -40,7 +40,7 @@ pub extern "system" fn renderer_init(
         None => { return; }
     };
 
-    // In 0.9.0, it is native_window::NativeWindow
+    // Correct path for 0.9.0
     let window = unsafe { ndk::native_window::NativeWindow::from_ptr(nonnull_ptr) };
     let width = window.width();
     let height = window.height();
@@ -69,7 +69,6 @@ pub extern "system" fn renderer_init(
 #[no_mangle]
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
     let obj = unsafe { JObject::from_raw(event) };
-    // jni 0.21 uses JValueOwned for fields
     if let Ok(JValueOwned::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
         let ev_ptr = p as *mut ndk_sys::AInputEvent;
         if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
@@ -80,9 +79,7 @@ pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobjec
 }
 
 #[no_mangle]
-pub extern "system" fn send_key_code(_env: JNIEnv, _clz: jclass, _keycode: jint) {
-    // Key code implementation if needed
-}
+pub extern "system" fn send_key_code(_env: JNIEnv, _clz: jclass, _keycode: jint) {}
 
 #[no_mangle]
 #[allow(non_snake_case)]
