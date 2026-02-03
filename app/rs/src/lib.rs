@@ -36,13 +36,9 @@ pub extern "system" fn renderer_init(
     fps: jint,
 ) {
     let window_ptr = unsafe { ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
-
     let nonnull_ptr = match std::ptr::NonNull::new(window_ptr) {
         Some(p) => p,
-        None => {
-            error!("ANativeWindow_fromSurface was null!");
-            return;
-        }
+        None => { return; }
     };
 
     let window = unsafe { ndk::native_window::NativeWindow::from_ptr(nonnull_ptr) };
@@ -52,61 +48,33 @@ pub extern "system" fn renderer_init(
     if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
         input::start_input_system(width, height);
         thread::spawn(move || {
-            let win = window_ptr as *mut c_void;
-            unsafe {
-                renderer_bindings::startOpenGLRenderer(win, width, height, xdpi as i32, ydpi as i32, fps as i32);
-            }
+            unsafe { renderer_bindings::startOpenGLRenderer(window_ptr as *mut c_void, width, height, xdpi as i32, ydpi as i32, fps as i32); }
         });
 
         let loader_jstr = unsafe { JString::from_raw(loader) };
         if let Ok(l_path) = env.get_string(&loader_jstr) {
-            let loader_path: String = l_path.into();
-            let log_path = "/data/data/io.twoyi/log.txt";
-            if let Ok(outputs) = File::create(log_path) {
-                let errors = outputs.try_clone().unwrap();
-                let _ = Command::new("./init")
-                    .current_dir("/data/data/io.twoyi/rootfs")
-                    .env("TYLOADER", loader_path)
-                    .stdout(Stdio::from(outputs))
-                    .stderr(Stdio::from(errors))
-                    .spawn();
-            }
+            let working_dir = "/data/data/io.twoyi/rootfs";
+            let _ = Command::new("./init")
+                .current_dir(working_dir)
+                .env("TYLOADER", String::from(l_path))
+                .spawn();
         }
     } else {
-        let win = window_ptr as *mut c_void;
         unsafe {
-            renderer_bindings::setNativeWindow(win);
-            renderer_bindings::resetSubWindow(win, 0, 0, width, height, width, height, 1.0, 0.0);
+            renderer_bindings::setNativeWindow(window_ptr as *mut c_void);
+            renderer_bindings::resetSubWindow(window_ptr as *mut c_void, 0, 0, width, height, width, height, 1.0, 0.0);
         }
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surface: jobject, _top: jint, _left: jint, _width: jint, _height: jint) {
-    unsafe {
-        let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
-        renderer_bindings::resetSubWindow(window as *mut c_void, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, surface: jobject) {
-    unsafe {
-        let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
-        renderer_bindings::removeSubWindow(window as *mut c_void);
     }
 }
 
 #[no_mangle]
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
     let obj = unsafe { JObject::from_raw(event) };
-    if let Ok(ptr) = env.get_field(&obj, "mNativePtr", "J") {
-        if let JValue::Long(p) = &ptr { 
-            let ev_ptr = *p as *mut ndk_sys::AInputEvent;
-            if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
-                let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
-                input::handle_touch(ev);
-            }
+    if let Ok(JValue::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
+        let ev_ptr = p as *mut ndk_sys::AInputEvent;
+        if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
+            let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
+            input::handle_touch(ev);
         }
     }
 }
@@ -123,8 +91,6 @@ unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
     let mut env = jvm.get_env().unwrap();
     let jni_methods = [
         jni_method!(init, renderer_init, "(Landroid/view/Surface;Ljava/lang/String;FFI)V"),
-        jni_method!(resetWindow, renderer_reset_window, "(Landroid/view/Surface;IIII)V"),
-        jni_method!(removeWindow, renderer_remove_window, "(Landroid/view/Surface;)V"),
         jni_method!(handleTouch, handle_touch, "(Landroid/view/MotionEvent;)V"),
         jni_method!(sendKeycode, send_key_code, "(I)V"),
     ];
