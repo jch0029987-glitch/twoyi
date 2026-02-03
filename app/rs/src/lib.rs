@@ -4,11 +4,11 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use jni::objects::{JValue, JObject, JString}; // Added JObject/JString
+use jni::objects::{JValue, JObject, JString};
 use jni::sys::{jclass, jfloat, jint, jobject, JNI_ERR, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
-use log::{error, info, Level, debug};
+use log::{error, info, Level, debug, LevelFilter}; // Added LevelFilter
 use ndk_sys;
 use std::ffi::c_void;
 
@@ -37,7 +37,7 @@ static RENDERER_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[no_mangle]
 pub extern "system" fn renderer_init(
-    mut env: JNIEnv, // Made mutable
+    mut env: JNIEnv,
     _clz: jclass,
     surface: jobject,
     loader: jstring,
@@ -57,17 +57,12 @@ pub extern "system" fn renderer_init(
     };
 
     let window = unsafe { ndk::native_window::NativeWindow::from_ptr(window) };
-
     let width = window.width();
     let height = window.height();
 
-    info!(
-        "renderer_init width: {}, height: {}, fps: {}",
-        width, height, fps
-    );
+    info!("renderer_init width: {}, height: {}, fps: {}", width, height, fps);
 
-    if RENDERER_STARTED.compare_exchange(false, true,
-        Ordering::Acquire, Ordering::Relaxed).is_err() {
+    if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
         let win = window.ptr().as_ptr() as *mut c_void;
         unsafe {
             renderer_bindings::setNativeWindow(win);
@@ -78,23 +73,13 @@ pub extern "system" fn renderer_init(
 
         thread::spawn(move || {
             let win = window.ptr().as_ptr() as *mut c_void;
-            info!("win: {:#?}", win);
             unsafe {
-                renderer_bindings::startOpenGLRenderer(
-                    win,
-                    width,
-                    height,
-                    xdpi as i32,
-                    ydpi as i32,
-                    fps as i32,
-                );
+                renderer_bindings::startOpenGLRenderer(win, width, height, xdpi as i32, ydpi as i32, fps as i32);
             }
         });
 
-        // Fixed JNI 0.21.1 conversion
-        let loader_jstr: &JString = unsafe { &JString::from_raw(loader) };
-        let loader_path: String = env.get_string(loader_jstr).unwrap().into();
-        
+        let loader_jstr = unsafe { JString::from_raw(loader) };
+        let loader_path: String = env.get_string(&loader_jstr).unwrap().into();
         let working_dir = "/data/data/io.twoyi/rootfs";
         let log_path = "/data/data/io.twoyi/log.txt";
         let outputs = File::create(log_path).unwrap();
@@ -109,16 +94,7 @@ pub extern "system" fn renderer_init(
 }
 
 #[no_mangle]
-pub extern "system" fn renderer_reset_window(
-    mut env: JNIEnv, // Made mutable
-    _clz: jclass,
-    surface: jobject,
-    _top: jint,
-    _left: jint,
-    _width: jint,
-    _height: jint,
-) {
-    debug!("reset_window");
+pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surface: jobject, _top: jint, _left: jint, _width: jint, _height: jint) {
     unsafe {
         let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
         renderer_bindings::resetSubWindow(window as *mut c_void, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
@@ -127,8 +103,6 @@ pub extern "system" fn renderer_reset_window(
 
 #[no_mangle]
 pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, surface: jobject) {
-    debug!("renderer_remove_window");
-
     unsafe {
         let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
         renderer_bindings::removeSubWindow(window as *mut c_void);
@@ -137,15 +111,12 @@ pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, sur
 
 #[no_mangle]
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
-    // Cast jobject to &JObject for AsRef support
     let obj = unsafe { JObject::from_raw(event) };
     let ptr = env.get_field(&obj, "mNativePtr", "J").unwrap();
 
-    if let JValue::Long(p) = ptr {
+    if let JValue::Long(p) = &ptr { // Fixed with &
         let ev = unsafe {
-            let nonptr =
-            std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(p))
-                .unwrap();
+            let nonptr = std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(*p)).unwrap();
             ndk::event::MotionEvent::from_ptr(nonptr)
         };
         input::handle_touch(ev)
@@ -154,35 +125,16 @@ pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobjec
 
 #[no_mangle]
 pub extern "system" fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) {
-    debug!("send key code!");
     input::send_key_code(keycode);
 }
 
 unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMethod]) -> jint {
-    let mut env = jvm.get_env().unwrap(); // Made mutable
-    let jni_version = env.get_version().unwrap();
-    let version: jint = jni_version.into();
+    let mut env = jvm.get_env().unwrap();
+    let version: jint = env.get_version().unwrap().into();
 
-    debug!("JNI Version : {:#?} ", jni_version);
-
-    let clazz = match env.find_class(class_name) {
-        Ok(clazz) => clazz,
-        Err(e) => {
-            error!("java class not found : {:?}", e);
-            return JNI_ERR;
-        }
-    };
-    debug!("clazz: {:#?}", clazz);
-
-    let result = env.register_native_methods(&clazz, &methods); // Reference clazz
-
-    if result.is_ok() {
-        debug!("register_natives : succeed");
-        version
-    } else {
-        error!("register_natives : failed ");
-        JNI_ERR
-    }
+    let clazz = env.find_class(class_name).unwrap();
+    let _ = env.register_native_methods(&clazz, methods);
+    version
 }
 
 #[no_mangle]
@@ -190,25 +142,15 @@ unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMeth
 unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
     android_logger::init_once(
         Config::default()
-            .with_max_level(Level::Info) // Renamed from with_min_level
+            .with_max_level(LevelFilter::Info) // Fixed to LevelFilter
             .with_tag("CLIENT_EGL"),
     );
-
-    debug!("JNI_OnLoad");
 
     let class_name: &str = "io/twoyi/Renderer";
     let jni_methods = [
         jni_method!(init, renderer_init, "(Landroid/view/Surface;Ljava/lang/String;FFI)V"),
-        jni_method!(
-            resetWindow,
-            renderer_reset_window,
-            "(Landroid/view/Surface;IIII)V"
-        ),
-        jni_method!(
-            removeWindow,
-            renderer_remove_window,
-            "(Landroid/view/Surface;)V"
-        ),
+        jni_method!(resetWindow, renderer_reset_window, "(Landroid/view/Surface;IIII)V"),
+        jni_method!(removeWindow, renderer_remove_window, "(Landroid/view/Surface;)V"),
         jni_method!(handleTouch, handle_touch, "(Landroid/view/MotionEvent;)V"),
         jni_method!(sendKeycode, send_key_code, "(I)V"),
     ];
