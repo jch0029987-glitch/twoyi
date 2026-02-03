@@ -15,6 +15,8 @@ android_logger = "0.13"
 libc = "0.2"
 once_cell = "1.18"
 unix_socket = "0.5.0"
-# Switched to 0.7.0 as it's more stable for the features we need
-ndk = { version = "0.7.0", features = ["native_window"] }
-ndk-sys = "0.4.0"
+
+# Using 0.6.0 which is the most compatible with the original Twoyi code
+# The feature name in this version is 'nativewindow'
+ndk = { version = "0.6.0", features = ["nativewindow"] }
+ndk-sys = "0.3.0"

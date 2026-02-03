@@ -8,7 +8,7 @@ use jni::objects::{JValue, JObject, JString};
 use jni::sys::{jclass, jfloat, jint, jobject, JNI_ERR, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
-use log::{error, info, Level, debug, LevelFilter}; // Added LevelFilter
+use log::{error, info, Level, debug, LevelFilter};
 use ndk_sys;
 use std::ffi::c_void;
 
@@ -46,24 +46,22 @@ pub extern "system" fn renderer_init(
     fps: jint,
 ) {
     debug!("renderer_init");
-    let window = unsafe { ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
+    let window_ptr = unsafe { ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
 
-    let window = match std::ptr::NonNull::new(window) {
-        Some(x) => x,
-        None => {
-            error!("ANativeWindow_fromSurface was null!");
-            return;
-        }
-    };
+    if window_ptr.is_null() {
+        error!("ANativeWindow_fromSurface was null!");
+        return;
+    }
 
-    let window = unsafe { ndk::native_window::NativeWindow::from_ptr(window) };
+    // In ndk 0.7.0, we use from_ptr on the NativeWindow struct
+    let window = unsafe { ndk::native_window::NativeWindow::from_ptr(std::ptr::NonNull::new(window_ptr).unwrap()) };
     let width = window.width();
     let height = window.height();
 
     info!("renderer_init width: {}, height: {}, fps: {}", width, height, fps);
 
     if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        let win = window.ptr().as_ptr() as *mut c_void;
+        let win = window_ptr as *mut c_void;
         unsafe {
             renderer_bindings::setNativeWindow(win);
             renderer_bindings::resetSubWindow(win, 0, 0, width, height, width, height, 1.0, 0.0);
@@ -72,7 +70,7 @@ pub extern "system" fn renderer_init(
         input::start_input_system(width, height);
 
         thread::spawn(move || {
-            let win = window.ptr().as_ptr() as *mut c_void;
+            let win = window_ptr as *mut c_void;
             unsafe {
                 renderer_bindings::startOpenGLRenderer(win, width, height, xdpi as i32, ydpi as i32, fps as i32);
             }
@@ -114,7 +112,8 @@ pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobjec
     let obj = unsafe { JObject::from_raw(event) };
     let ptr = env.get_field(&obj, "mNativePtr", "J").unwrap();
 
-    if let JValue::Long(p) = &ptr { // Fixed with &
+    // Corrected JValue borrowing for JNI 0.21
+    if let JValue::Long(p) = &ptr { 
         let ev = unsafe {
             let nonptr = std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(*p)).unwrap();
             ndk::event::MotionEvent::from_ptr(nonptr)
@@ -142,7 +141,7 @@ unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMeth
 unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
     android_logger::init_once(
         Config::default()
-            .with_max_level(LevelFilter::Info) // Fixed to LevelFilter
+            .with_max_level(LevelFilter::Info)
             .with_tag("CLIENT_EGL"),
     );
 
