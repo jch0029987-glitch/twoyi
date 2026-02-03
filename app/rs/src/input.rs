@@ -7,12 +7,10 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
-// Constants for EV_ABS
 const ABS_MT_SLOT: u16 = 0x2f;
 const ABS_MT_POSITION_X: u16 = 0x35;
 const ABS_MT_POSITION_Y: u16 = 0x36;
 const ABS_MT_TRACKING_ID: u16 = 0x39;
-const ABS_MT_PRESSURE: u16 = 0x3a;
 
 const TOUCH_PATH: &'static str = "/data/data/io.twoyi/rootfs/dev/input/touch";
 static INPUT_SENDER: Lazy<Mutex<Option<Sender<input_event>>>> = Lazy::new(|| Mutex::new(None));
@@ -46,11 +44,9 @@ pub fn handle_touch(ev: MotionEvent) {
                 input_event_write(tx, EV_ABS as u16, ABS_MT_TRACKING_ID, id + 1);
                 input_event_write(tx, EV_ABS as u16, ABS_MT_POSITION_X, pointer.x() as i32);
                 input_event_write(tx, EV_ABS as u16, ABS_MT_POSITION_Y, pointer.y() as i32);
-                input_event_write(tx, EV_ABS as u16, ABS_MT_PRESSURE, pointer.pressure() as i32);
                 input_event_write(tx, EV_SYN as u16, SYN_REPORT as u16, 0);
             }
             MotionAction::Move => {
-                // For move, we typically update all active pointers
                 for i in 0..ev.pointer_count() {
                     let p = ev.pointer_at_index(i);
                     input_event_write(tx, EV_ABS as u16, ABS_MT_SLOT, p.pointer_id());
@@ -78,7 +74,7 @@ fn touch_server(_w: i32, _h: i32) {
                 *INPUT_SENDER.lock().unwrap() = Some(tx);
                 while let Ok(ev) = rx.recv() {
                     let data = unsafe { std::slice::from_raw_parts(&ev as *const _ as *const u8, std::mem::size_of::<input_event>()) };
-                    if s.write_all(data).is_err() { break; }
+                    let _ = s.write_all(data);
                 }
             }
         }

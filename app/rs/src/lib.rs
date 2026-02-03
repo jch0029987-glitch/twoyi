@@ -1,4 +1,4 @@
-use jni::objects::{JValue, JObject, JString};
+use jni::objects::{JValueOwned, JObject, JString};
 use jni::sys::{jclass, jfloat, jint, jobject, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
@@ -53,9 +53,8 @@ pub extern "system" fn renderer_init(
 
         let loader_jstr = unsafe { JString::from_raw(loader) };
         if let Ok(l_path) = env.get_string(&loader_jstr) {
-            let working_dir = "/data/data/io.twoyi/rootfs";
             let _ = Command::new("./init")
-                .current_dir(working_dir)
+                .current_dir("/data/data/io.twoyi/rootfs")
                 .env("TYLOADER", String::from(l_path))
                 .spawn();
         }
@@ -70,7 +69,8 @@ pub extern "system" fn renderer_init(
 #[no_mangle]
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
     let obj = unsafe { JObject::from_raw(event) };
-    if let Ok(JValue::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
+    // JNI 0.21 returns JValueOwned
+    if let Ok(JValueOwned::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
         let ev_ptr = p as *mut ndk_sys::AInputEvent;
         if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
             let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
