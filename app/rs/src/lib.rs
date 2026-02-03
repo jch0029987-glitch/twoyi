@@ -1,9 +1,3 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/.
- */
-
 use jni::objects::{JValue, JObject, JString};
 use jni::sys::{jclass, jfloat, jint, jobject, jstring};
 use jni::JNIEnv;
@@ -41,7 +35,6 @@ pub extern "system" fn renderer_init(
     ydpi: jfloat,
     fps: jint,
 ) {
-    debug!("renderer_init");
     let window_ptr = unsafe { ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
 
     let nonnull_ptr = match std::ptr::NonNull::new(window_ptr) {
@@ -52,16 +45,12 @@ pub extern "system" fn renderer_init(
         }
     };
 
-    // Correct for ndk 0.8.0
     let window = unsafe { ndk::native_window::NativeWindow::from_ptr(nonnull_ptr) };
     let width = window.width();
     let height = window.height();
 
-    info!("renderer_init width: {}, height: {}, fps: {}", width, height, fps);
-
     if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
         input::start_input_system(width, height);
-
         thread::spawn(move || {
             let win = window_ptr as *mut c_void;
             unsafe {
@@ -70,18 +59,18 @@ pub extern "system" fn renderer_init(
         });
 
         let loader_jstr = unsafe { JString::from_raw(loader) };
-        let loader_path: String = env.get_string(&loader_jstr).unwrap().into();
-        let working_dir = "/data/data/io.twoyi/rootfs";
-        let log_path = "/data/data/io.twoyi/log.txt";
-        
-        if let Ok(outputs) = File::create(log_path) {
-            let errors = outputs.try_clone().unwrap();
-            let _ = Command::new("./init")
-                .current_dir(working_dir)
-                .env("TYLOADER", loader_path)
-                .stdout(Stdio::from(outputs))
-                .stderr(Stdio::from(errors))
-                .spawn();
+        if let Ok(l_path) = env.get_string(&loader_jstr) {
+            let loader_path: String = l_path.into();
+            let log_path = "/data/data/io.twoyi/log.txt";
+            if let Ok(outputs) = File::create(log_path) {
+                let errors = outputs.try_clone().unwrap();
+                let _ = Command::new("./init")
+                    .current_dir("/data/data/io.twoyi/rootfs")
+                    .env("TYLOADER", loader_path)
+                    .stdout(Stdio::from(outputs))
+                    .stderr(Stdio::from(errors))
+                    .spawn();
+            }
         }
     } else {
         let win = window_ptr as *mut c_void;
@@ -113,7 +102,7 @@ pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobjec
     let obj = unsafe { JObject::from_raw(event) };
     if let Ok(ptr) = env.get_field(&obj, "mNativePtr", "J") {
         if let JValue::Long(p) = &ptr { 
-            let ev_ptr = unsafe { std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(*p) };
+            let ev_ptr = *p as *mut ndk_sys::AInputEvent;
             if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
                 let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
                 input::handle_touch(ev);
@@ -130,14 +119,8 @@ pub extern "system" fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) 
 #[no_mangle]
 #[allow(non_snake_case)]
 unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
-    android_logger::init_once(
-        Config::default()
-            .with_max_level(LevelFilter::Info)
-            .with_tag("CLIENT_EGL"),
-    );
-
+    android_logger::init_once(Config::default().with_max_level(LevelFilter::Info).with_tag("CLIENT_EGL"));
     let mut env = jvm.get_env().unwrap();
-    let class_name = "io/twoyi/Renderer";
     let jni_methods = [
         jni_method!(init, renderer_init, "(Landroid/view/Surface;Ljava/lang/String;FFI)V"),
         jni_method!(resetWindow, renderer_reset_window, "(Landroid/view/Surface;IIII)V"),
@@ -145,9 +128,7 @@ unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
         jni_method!(handleTouch, handle_touch, "(Landroid/view/MotionEvent;)V"),
         jni_method!(sendKeycode, send_key_code, "(I)V"),
     ];
-
-    let clazz = env.find_class(class_name).unwrap();
+    let clazz = env.find_class("io/twoyi/Renderer").unwrap();
     let _ = env.register_native_methods(&clazz, &jni_methods);
-    
     jni::sys::JNI_VERSION_1_6
 }

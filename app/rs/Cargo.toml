@@ -15,6 +15,6 @@ android_logger = "0.13"
 libc = "0.2"
 once_cell = "1.18"
 unix_socket = "0.5.0"
-# For 0.8.0, the features are 'input' and 'native_window'
-ndk = { version = "0.8.0", features = ["input", "native_window"] }
+# In 0.8.0, MotionEvent is default. native_window has an underscore.
+ndk = { version = "0.8.0", features = ["native_window"] }
 ndk-sys = "0.5.0"
