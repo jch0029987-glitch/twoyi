@@ -31,7 +31,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r25c # Stable NDK version for Rust-Android compatibility
+          ndk-version: r25c
           add-to-path: true
 
       - name: Install Rust Toolchain
@@ -42,19 +42,25 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
 
-      - name: Prepare Rust Build Environment
-        run: |
-          chmod +x rs/build_rs.sh
-          # Create jniLibs directory if it doesn't exist to prevent Gradle errors
-          mkdir -p app/src/main/jniLibs/arm64-v8a
-
       - name: Build Rust Native Binaries
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-          # Some build scripts look for NDK_HOME specifically
-          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }} 
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          cd rs
+          # Robust way to find the script even if folder structure varies
+          SCRIPT_PATH=$(find . -name "build_rs.sh" | head -n 1)
+          
+          if [ -z "$SCRIPT_PATH" ]; then
+            echo "ERROR: build_rs.sh not found in the repository!"
+            ls -R
+            exit 1
+          fi
+          
+          echo "Found script at: $SCRIPT_PATH"
+          chmod +x "$SCRIPT_PATH"
+          
+          # Navigate to the directory containing the script and run it
+          cd "$(dirname "$SCRIPT_PATH")"
           ./build_rs.sh --release
 
       - name: Build Android APK
@@ -67,6 +73,5 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Twoyi-Release-APK
+          name: Twoyi-Modern-Release
           path: app/build/outputs/apk/release/*.apk
-          retention-days: 7
