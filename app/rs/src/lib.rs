@@ -34,13 +34,13 @@ pub extern "system" fn renderer_init(
     ydpi: jfloat,
     fps: jint,
 ) {
-    let window_ptr = unsafe { ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
+    // Use the ffi module from the ndk crate to ensure type compatibility
+    let window_ptr = unsafe { ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
     let nonnull_ptr = match std::ptr::NonNull::new(window_ptr) {
         Some(p) => p,
         None => { return; }
     };
 
-    // Correct path for 0.9.0
     let window = unsafe { ndk::native_window::NativeWindow::from_ptr(nonnull_ptr) };
     let width = window.width();
     let height = window.height();
@@ -70,7 +70,8 @@ pub extern "system" fn renderer_init(
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
     let obj = unsafe { JObject::from_raw(event) };
     if let Ok(JValueOwned::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
-        let ev_ptr = p as *mut ndk_sys::AInputEvent;
+        // cast to the specific ffi type ndk 0.9.0 expects
+        let ev_ptr = p as *mut ndk::ffi::AInputEvent;
         if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
             let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
             input::handle_touch(ev);
