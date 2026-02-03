@@ -1,8 +1,10 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
 
-use jni::objects::JValue;
+use jni::objects::{JValue, JObject, JString}; // Added JObject/JString
 use jni::sys::{jclass, jfloat, jint, jobject, JNI_ERR, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
@@ -21,10 +23,6 @@ use std::process::{Command, Stdio};
 mod input;
 mod renderer_bindings;
 
-/// ## Examples
-/// ```
-/// let method:NativeMethod = jni_method!(native_method, "(Ljava/lang/String;)V");
-/// ```
 macro_rules! jni_method {
     ( $name: tt, $method:tt, $signature:expr ) => {{
         jni::NativeMethod {
@@ -38,8 +36,8 @@ macro_rules! jni_method {
 static RENDERER_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[no_mangle]
-pub fn renderer_init(
-    env: JNIEnv,
+pub extern "system" fn renderer_init(
+    mut env: JNIEnv, // Made mutable
     _clz: jclass,
     surface: jobject,
     loader: jstring,
@@ -68,7 +66,7 @@ pub fn renderer_init(
         width, height, fps
     );
 
-    if RENDERER_STARTED.compare_exchange(false, true, 
+    if RENDERER_STARTED.compare_exchange(false, true,
         Ordering::Acquire, Ordering::Relaxed).is_err() {
         let win = window.ptr().as_ptr() as *mut c_void;
         unsafe {
@@ -93,7 +91,10 @@ pub fn renderer_init(
             }
         });
 
-        let loader_path: String = env.get_string(loader.into()).unwrap().into();
+        // Fixed JNI 0.21.1 conversion
+        let loader_jstr: &JString = unsafe { &JString::from_raw(loader) };
+        let loader_path: String = env.get_string(loader_jstr).unwrap().into();
+        
         let working_dir = "/data/data/io.twoyi/rootfs";
         let log_path = "/data/data/io.twoyi/log.txt";
         let outputs = File::create(log_path).unwrap();
@@ -108,8 +109,8 @@ pub fn renderer_init(
 }
 
 #[no_mangle]
-pub fn renderer_reset_window(
-    env: JNIEnv,
+pub extern "system" fn renderer_reset_window(
+    mut env: JNIEnv, // Made mutable
     _clz: jclass,
     surface: jobject,
     _top: jint,
@@ -125,7 +126,7 @@ pub fn renderer_reset_window(
 }
 
 #[no_mangle]
-pub fn renderer_remove_window(env: JNIEnv, _clz: jclass, surface: jobject) {
+pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, surface: jobject) {
     debug!("renderer_remove_window");
 
     unsafe {
@@ -135,9 +136,10 @@ pub fn renderer_remove_window(env: JNIEnv, _clz: jclass, surface: jobject) {
 }
 
 #[no_mangle]
-pub fn handle_touch(env: JNIEnv, _clz: jclass, event: jobject) {
-    // TODO: cache the field id.
-    let ptr = env.get_field(event, "mNativePtr", "J").unwrap();
+pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
+    // Cast jobject to &JObject for AsRef support
+    let obj = unsafe { JObject::from_raw(event) };
+    let ptr = env.get_field(&obj, "mNativePtr", "J").unwrap();
 
     if let JValue::Long(p) = ptr {
         let ev = unsafe {
@@ -150,13 +152,14 @@ pub fn handle_touch(env: JNIEnv, _clz: jclass, event: jobject) {
     }
 }
 
-pub fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) {
+#[no_mangle]
+pub extern "system" fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) {
     debug!("send key code!");
     input::send_key_code(keycode);
 }
 
 unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMethod]) -> jint {
-    let env: JNIEnv = jvm.get_env().unwrap();
+    let mut env = jvm.get_env().unwrap(); // Made mutable
     let jni_version = env.get_version().unwrap();
     let version: jint = jni_version.into();
 
@@ -171,7 +174,7 @@ unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMeth
     };
     debug!("clazz: {:#?}", clazz);
 
-    let result = env.register_native_methods(clazz, &methods);
+    let result = env.register_native_methods(&clazz, &methods); // Reference clazz
 
     if result.is_ok() {
         debug!("register_natives : succeed");
@@ -187,7 +190,7 @@ unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMeth
 unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
     android_logger::init_once(
         Config::default()
-            .with_min_level(Level::Info)
+            .with_max_level(Level::Info) // Renamed from with_min_level
             .with_tag("CLIENT_EGL"),
     );
 
