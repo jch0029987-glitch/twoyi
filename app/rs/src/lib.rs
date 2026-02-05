@@ -2,7 +2,7 @@ use jni::objects::{JValueOwned, JObject, JString};
 use jni::sys::{jclass, jfloat, jint, jobject, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
-use log::{error, info, debug, LevelFilter};
+use log::{error, info, LevelFilter};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -35,13 +35,13 @@ pub extern "system" fn renderer_init(
     ydpi: jfloat,
     fps: jint,
 ) {
-    // We use ndk::ffi directly to ensure the pointer type matches what ndk 0.9.0 expects internally
+    // We use ndk::ffi to ensure we are using the exact same types as the ndk crate
     let window_ptr = unsafe { ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
 
     let nonnull_ptr = match std::ptr::NonNull::new(window_ptr) {
         Some(p) => p,
         None => {
-            error!("ANativeWindow_fromSurface returned null!");
+            error!("Failed to get ANativeWindow from surface");
             return;
         }
     };
@@ -51,7 +51,7 @@ pub extern "system" fn renderer_init(
     let height = window.height();
 
     if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-        info!("Starting renderer with resolution {}x{}", width, height);
+        info!("Initializing Twoyi Renderer: {}x{}", width, height);
         input::start_input_system(width, height);
         
         thread::spawn(move || {
@@ -104,7 +104,7 @@ pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, sur
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
     let obj = unsafe { JObject::from_raw(event) };
     
-    // In jni 0.21, get_field returns JValueOwned. We need to match on Long.
+    // Pattern match JValueOwned::Long for JNI 0.21.1
     if let Ok(JValueOwned::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
         let ev_ptr = p as *mut ndk::ffi::AInputEvent;
         if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {

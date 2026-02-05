@@ -7,16 +7,28 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
+// Constants for EV_ABS and EV_SYN
 const ABS_MT_SLOT: u16 = 0x2f;
 const ABS_MT_POSITION_X: u16 = 0x35;
 const ABS_MT_POSITION_Y: u16 = 0x36;
 const ABS_MT_TRACKING_ID: u16 = 0x39;
+const ABS_MT_PRESSURE: u16 = 0x3a;
+
+// Re-defining input_event to ensure binary compatibility with the Android kernel
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct input_event {
+    pub time: timeval,
+    pub type_: u16,
+    pub code: u16,
+    pub value: i32,
+}
 
 const TOUCH_PATH: &'static str = "/data/data/io.twoyi/rootfs/dev/input/touch";
 static INPUT_SENDER: Lazy<Mutex<Option<Sender<input_event>>>> = Lazy::new(|| Mutex::new(None));
 
-pub fn start_input_system(width: i32, height: i32) {
-    thread::spawn(move || { touch_server(width, height); });
+pub fn start_input_system(_width: i32, _height: i32) {
+    thread::spawn(move || { touch_server(); });
 }
 
 pub fn input_event_write(tx: &Sender<input_event>, kind: u16, code: u16, val: i32) {
@@ -26,7 +38,10 @@ pub fn input_event_write(tx: &Sender<input_event>, kind: u16, code: u16, val: i3
         type_: kind,
         code: code,
         value: val,
-        time: timeval { tv_sec: tp.tv_sec, tv_usec: (tp.tv_nsec / 1000) as suseconds_t },
+        time: timeval { 
+            tv_sec: tp.tv_sec, 
+            tv_usec: (tp.tv_nsec / 1000) as suseconds_t 
+        },
     };
     let _ = tx.send(ev);
 }
@@ -44,6 +59,7 @@ pub fn handle_touch(ev: MotionEvent) {
                 input_event_write(tx, EV_ABS as u16, ABS_MT_TRACKING_ID, id + 1);
                 input_event_write(tx, EV_ABS as u16, ABS_MT_POSITION_X, pointer.x() as i32);
                 input_event_write(tx, EV_ABS as u16, ABS_MT_POSITION_Y, pointer.y() as i32);
+                input_event_write(tx, EV_ABS as u16, ABS_MT_PRESSURE, (pointer.pressure() * 100.0) as i32);
                 input_event_write(tx, EV_SYN as u16, SYN_REPORT as u16, 0);
             }
             MotionAction::Move => {
@@ -65,7 +81,7 @@ pub fn handle_touch(ev: MotionEvent) {
     }
 }
 
-fn touch_server(_w: i32, _h: i32) {
+fn touch_server() {
     let _ = std::fs::remove_file(TOUCH_PATH);
     if let Ok(listener) = UnixListener::bind(TOUCH_PATH) {
         for stream in listener.incoming() {
@@ -73,12 +89,19 @@ fn touch_server(_w: i32, _h: i32) {
                 let (tx, rx) = channel();
                 *INPUT_SENDER.lock().unwrap() = Some(tx);
                 while let Ok(ev) = rx.recv() {
-                    let data = unsafe { std::slice::from_raw_parts(&ev as *const _ as *const u8, std::mem::size_of::<input_event>()) };
-                    let _ = s.write_all(data);
+                    let data = unsafe { 
+                        std::slice::from_raw_parts(
+                            &ev as *const _ as *const u8, 
+                            std::mem::size_of::<input_event>()
+                        ) 
+                    };
+                    if s.write_all(data).is_err() { break; }
                 }
             }
         }
     }
 }
 
-pub fn send_key_code(_k: i32) {}
+pub fn send_key_code(_k: i32) {
+    // Optional: Implement keyboard/button events if needed
+}

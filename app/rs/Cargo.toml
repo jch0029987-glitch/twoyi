@@ -15,5 +15,5 @@ android_logger = "0.13"
 libc = "0.2"
 once_cell = "1.18"
 unix_socket = "0.5.0"
-# ndk 0.9.0 features are: 'native-window' and 'event'
-ndk = { version = "0.9.0", features = ["native-window", "event"] }
+# In 0.9.0, these are the correct feature gates
+ndk = { version = "0.9.0", features = ["nativewindow", "jni"] }
