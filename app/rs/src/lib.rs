@@ -2,12 +2,13 @@ use jni::objects::{JValueOwned, JObject, JString};
 use jni::sys::{jclass, jfloat, jint, jobject, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
-use log::{LevelFilter};
+use log::{error, info, debug, LevelFilter};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use android_logger::Config;
-use std::process::{Command};
+use std::fs::File;
+use std::process::{Command, Stdio};
 
 mod input;
 mod renderer_bindings;
@@ -34,11 +35,15 @@ pub extern "system" fn renderer_init(
     ydpi: jfloat,
     fps: jint,
 ) {
-    // Use the ffi module from the ndk crate to ensure type compatibility
+    // We use ndk::ffi directly to ensure the pointer type matches what ndk 0.9.0 expects internally
     let window_ptr = unsafe { ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
+
     let nonnull_ptr = match std::ptr::NonNull::new(window_ptr) {
         Some(p) => p,
-        None => { return; }
+        None => {
+            error!("ANativeWindow_fromSurface returned null!");
+            return;
+        }
     };
 
     let window = unsafe { ndk::native_window::NativeWindow::from_ptr(nonnull_ptr) };
@@ -46,31 +51,61 @@ pub extern "system" fn renderer_init(
     let height = window.height();
 
     if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        info!("Starting renderer with resolution {}x{}", width, height);
         input::start_input_system(width, height);
+        
         thread::spawn(move || {
-            unsafe { renderer_bindings::startOpenGLRenderer(window_ptr as *mut c_void, width, height, xdpi as i32, ydpi as i32, fps as i32); }
+            let win = window_ptr as *mut c_void;
+            unsafe {
+                renderer_bindings::startOpenGLRenderer(win, width, height, xdpi as i32, ydpi as i32, fps as i32);
+            }
         });
 
         let loader_jstr = unsafe { JString::from_raw(loader) };
         if let Ok(l_path) = env.get_string(&loader_jstr) {
-            let _ = Command::new("./init")
-                .current_dir("/data/data/io.twoyi/rootfs")
-                .env("TYLOADER", String::from(l_path))
-                .spawn();
+            let loader_path: String = l_path.into();
+            let log_path = "/data/data/io.twoyi/log.txt";
+            if let Ok(outputs) = File::create(log_path) {
+                let errors = outputs.try_clone().unwrap();
+                let _ = Command::new("./init")
+                    .current_dir("/data/data/io.twoyi/rootfs")
+                    .env("TYLOADER", loader_path)
+                    .stdout(Stdio::from(outputs))
+                    .stderr(Stdio::from(errors))
+                    .spawn();
+            }
         }
     } else {
+        let win = window_ptr as *mut c_void;
         unsafe {
-            renderer_bindings::setNativeWindow(window_ptr as *mut c_void);
-            renderer_bindings::resetSubWindow(window_ptr as *mut c_void, 0, 0, width, height, width, height, 1.0, 0.0);
+            renderer_bindings::setNativeWindow(win);
+            renderer_bindings::resetSubWindow(win, 0, 0, width, height, width, height, 1.0, 0.0);
         }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surface: jobject, _top: jint, _left: jint, _width: jint, _height: jint) {
+    unsafe {
+        let window = ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface);
+        renderer_bindings::resetSubWindow(window as *mut c_void, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, surface: jobject) {
+    unsafe {
+        let window = ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface);
+        renderer_bindings::removeSubWindow(window as *mut c_void);
     }
 }
 
 #[no_mangle]
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
     let obj = unsafe { JObject::from_raw(event) };
+    
+    // In jni 0.21, get_field returns JValueOwned. We need to match on Long.
     if let Ok(JValueOwned::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
-        // cast to the specific ffi type ndk 0.9.0 expects
         let ev_ptr = p as *mut ndk::ffi::AInputEvent;
         if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
             let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
@@ -80,19 +115,30 @@ pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobjec
 }
 
 #[no_mangle]
-pub extern "system" fn send_key_code(_env: JNIEnv, _clz: jclass, _keycode: jint) {}
+pub extern "system" fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) {
+    input::send_key_code(keycode);
+}
 
 #[no_mangle]
 #[allow(non_snake_case)]
 unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
-    android_logger::init_once(Config::default().with_max_level(LevelFilter::Info).with_tag("CLIENT_EGL"));
+    android_logger::init_once(
+        Config::default()
+            .with_max_level(LevelFilter::Info)
+            .with_tag("CLIENT_EGL")
+    );
+
     let mut env = jvm.get_env().unwrap();
     let jni_methods = [
         jni_method!(init, renderer_init, "(Landroid/view/Surface;Ljava/lang/String;FFI)V"),
+        jni_method!(resetWindow, renderer_reset_window, "(Landroid/view/Surface;IIII)V"),
+        jni_method!(removeWindow, renderer_remove_window, "(Landroid/view/Surface;)V"),
         jni_method!(handleTouch, handle_touch, "(Landroid/view/MotionEvent;)V"),
         jni_method!(sendKeycode, send_key_code, "(I)V"),
     ];
+
     let clazz = env.find_class("io/twoyi/Renderer").unwrap();
     let _ = env.register_native_methods(&clazz, &jni_methods);
+
     jni::sys::JNI_VERSION_1_6
 }
