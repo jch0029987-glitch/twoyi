@@ -42,11 +42,11 @@ pub extern "system" fn renderer_init(
     let width = window.width();
     let height = window.height();
 
+    let window_ptr = window.ptr().as_ptr() as *mut c_void;
+
     if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
         info!("Initializing Twoyi Renderer: {}x{}", width, height);
         input::start_input_system(width, height);
-
-        let window_ptr = window.ptr() as *mut c_void;
 
         thread::spawn(move || {
             unsafe {
@@ -69,7 +69,6 @@ pub extern "system" fn renderer_init(
             }
         }
     } else {
-        let window_ptr = window.ptr() as *mut c_void;
         unsafe {
             renderer_bindings::setNativeWindow(window_ptr);
             renderer_bindings::resetSubWindow(window_ptr, 0, 0, width, height, width, height, 1.0, 0.0);
@@ -81,7 +80,7 @@ pub extern "system" fn renderer_init(
 pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surface: jobject, _top: jint, _left: jint, _width: jint, _height: jint) {
     let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) }
         .expect("Failed to get NativeWindow from surface");
-    let window_ptr = window.ptr() as *mut c_void;
+    let window_ptr = window.ptr().as_ptr() as *mut c_void;
     unsafe {
         renderer_bindings::resetSubWindow(window_ptr, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
     }
@@ -91,7 +90,7 @@ pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surf
 pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, surface: jobject) {
     let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) }
         .expect("Failed to get NativeWindow from surface");
-    let window_ptr = window.ptr() as *mut c_void;
+    let window_ptr = window.ptr().as_ptr() as *mut c_void;
     unsafe {
         renderer_bindings::removeSubWindow(window_ptr);
     }
