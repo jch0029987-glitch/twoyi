@@ -13,8 +13,7 @@ use std::process::{Command, Stdio};
 mod input;
 mod renderer_bindings;
 
-use ndk::native_window::NativeWindow; // safe wrapper for ANativeWindow
-use ndk_sys::ANativeWindow_fromSurface; // optional raw FFI
+use ndk::native_window::NativeWindow;
 
 macro_rules! jni_method {
     ( $name: tt, $method:tt, $signature:expr ) => {{
@@ -38,8 +37,8 @@ pub extern "system" fn renderer_init(
     ydpi: jfloat,
     fps: jint,
 ) {
-    // Use safe Rust wrapper instead of ndk::ffi
-    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) };
+    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) }
+        .expect("Failed to get NativeWindow from surface");
     let width = window.width();
     let height = window.height();
 
@@ -80,7 +79,8 @@ pub extern "system" fn renderer_init(
 
 #[no_mangle]
 pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surface: jobject, _top: jint, _left: jint, _width: jint, _height: jint) {
-    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) };
+    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) }
+        .expect("Failed to get NativeWindow from surface");
     let window_ptr = window.ptr() as *mut c_void;
     unsafe {
         renderer_bindings::resetSubWindow(window_ptr, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
@@ -89,7 +89,8 @@ pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surf
 
 #[no_mangle]
 pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, surface: jobject) {
-    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) };
+    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) }
+        .expect("Failed to get NativeWindow from surface");
     let window_ptr = window.ptr() as *mut c_void;
     unsafe {
         renderer_bindings::removeSubWindow(window_ptr);
@@ -101,9 +102,9 @@ pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobjec
     let obj = unsafe { JObject::from_raw(event) };
 
     if let Ok(JValueOwned::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
-        let ev_ptr = p as *mut ndk_sys::AInputEvent; // raw pointer
+        let ev_ptr = p as *mut c_void;
         if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
-            let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
+            let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr.cast()) };
             input::handle_touch(ev);
         }
     }
