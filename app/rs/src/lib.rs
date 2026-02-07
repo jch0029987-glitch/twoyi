@@ -13,6 +13,9 @@ use std::process::{Command, Stdio};
 mod input;
 mod renderer_bindings;
 
+use ndk::native_window::NativeWindow; // safe wrapper for ANativeWindow
+use ndk_sys::ANativeWindow_fromSurface; // optional raw FFI
+
 macro_rules! jni_method {
     ( $name: tt, $method:tt, $signature:expr ) => {{
         jni::NativeMethod {
@@ -35,29 +38,20 @@ pub extern "system" fn renderer_init(
     ydpi: jfloat,
     fps: jint,
 ) {
-    // We use ndk::ffi to ensure we are using the exact same types as the ndk crate
-    let window_ptr = unsafe { ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
-
-    let nonnull_ptr = match std::ptr::NonNull::new(window_ptr) {
-        Some(p) => p,
-        None => {
-            error!("Failed to get ANativeWindow from surface");
-            return;
-        }
-    };
-
-    let window = unsafe { ndk::native_window::NativeWindow::from_ptr(nonnull_ptr) };
+    // Use safe Rust wrapper instead of ndk::ffi
+    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) };
     let width = window.width();
     let height = window.height();
 
     if RENDERER_STARTED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
         info!("Initializing Twoyi Renderer: {}x{}", width, height);
         input::start_input_system(width, height);
-        
+
+        let window_ptr = window.ptr() as *mut c_void;
+
         thread::spawn(move || {
-            let win = window_ptr as *mut c_void;
             unsafe {
-                renderer_bindings::startOpenGLRenderer(win, width, height, xdpi as i32, ydpi as i32, fps as i32);
+                renderer_bindings::startOpenGLRenderer(window_ptr, width, height, xdpi as i32, ydpi as i32, fps as i32);
             }
         });
 
@@ -76,37 +70,38 @@ pub extern "system" fn renderer_init(
             }
         }
     } else {
-        let win = window_ptr as *mut c_void;
+        let window_ptr = window.ptr() as *mut c_void;
         unsafe {
-            renderer_bindings::setNativeWindow(win);
-            renderer_bindings::resetSubWindow(win, 0, 0, width, height, width, height, 1.0, 0.0);
+            renderer_bindings::setNativeWindow(window_ptr);
+            renderer_bindings::resetSubWindow(window_ptr, 0, 0, width, height, width, height, 1.0, 0.0);
         }
     }
 }
 
 #[no_mangle]
 pub extern "system" fn renderer_reset_window(mut env: JNIEnv, _clz: jclass, surface: jobject, _top: jint, _left: jint, _width: jint, _height: jint) {
+    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) };
+    let window_ptr = window.ptr() as *mut c_void;
     unsafe {
-        let window = ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface);
-        renderer_bindings::resetSubWindow(window as *mut c_void, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
+        renderer_bindings::resetSubWindow(window_ptr, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
     }
 }
 
 #[no_mangle]
 pub extern "system" fn renderer_remove_window(mut env: JNIEnv, _clz: jclass, surface: jobject) {
+    let window = unsafe { NativeWindow::from_surface(env.get_native_interface(), surface) };
+    let window_ptr = window.ptr() as *mut c_void;
     unsafe {
-        let window = ndk::ffi::ANativeWindow_fromSurface(env.get_native_interface(), surface);
-        renderer_bindings::removeSubWindow(window as *mut c_void);
+        renderer_bindings::removeSubWindow(window_ptr);
     }
 }
 
 #[no_mangle]
 pub extern "system" fn handle_touch(mut env: JNIEnv, _clz: jclass, event: jobject) {
     let obj = unsafe { JObject::from_raw(event) };
-    
-    // Pattern match JValueOwned::Long for JNI 0.21.1
+
     if let Ok(JValueOwned::Long(p)) = env.get_field(&obj, "mNativePtr", "J") {
-        let ev_ptr = p as *mut ndk::ffi::AInputEvent;
+        let ev_ptr = p as *mut ndk_sys::AInputEvent; // raw pointer
         if let Some(nonptr) = std::ptr::NonNull::new(ev_ptr) {
             let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
             input::handle_touch(ev);
