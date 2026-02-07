@@ -12,9 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout repo
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # 2️⃣ Set up JDK 17 for Android
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -22,9 +24,11 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
+      # 3️⃣ Set up Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # 4️⃣ Install Android NDK
       - name: Install Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -32,35 +36,40 @@ jobs:
           ndk-version: r25c
           add-to-path: true
 
+      # 5️⃣ Install Rust toolchain
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
 
+      # 6️⃣ Add Android Rust target
+      - name: Add Rust target for Android
+        run: rustup target add aarch64-linux-android
+
+      # 7️⃣ Install cargo-ndk
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cargo install cargo-ndk || true
 
+      # 8️⃣ Build Rust native binaries (.so)
       - name: Build Rust Native Binaries
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          # Locate the build script dynamically
           SCRIPT_PATH=$(find . -name "build_rs.sh" | head -n 1)
-          
           if [ -z "$SCRIPT_PATH" ]; then
             echo "ERROR: build_rs.sh not found!"
             exit 1
           fi
-          
-          echo "Found script at: $SCRIPT_PATH"
+          echo "Found build script at: $SCRIPT_PATH"
           chmod +x "$SCRIPT_PATH"
-          
-          # Change to the directory containing the script and run it
           cd "$(dirname "$SCRIPT_PATH")"
           ./build_rs.sh --release
 
+      # 9️⃣ Build Android APK
       - name: Build Android APK
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -69,6 +78,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease
 
+      # 🔟 Upload APK artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
